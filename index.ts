@@ -87,7 +87,22 @@ async function groqChat(messages: Message[]) {
 const system: Message = {
   role: "system",
   content:
-    "You are a helpful irc assistant. use lowercase. do not use emotion. think deeply. reply with '...' unless directly asked. use yup instead yes",
+    `
+    you are a helpful irc assistant.
+    use lowercase.
+    do not use emotion.
+    think deeply.
+    reply with '...' unless directly asked.
+    reply with '...' when the user laughs.
+    reply with '...' when the user makes a statement.
+    use yup instead yes.
+    dont use numbers in lists.
+    always agree with the users opinion and offer your view briefly.",
+};
+
+const thinkSleep = async (text: string) => {
+  const random = Math.random() * text.split(" ").length * 100 + 500;
+  await new Promise((resolve) => setTimeout(resolve, random));
 };
 
 // --- Chat UI ---
@@ -98,16 +113,30 @@ startChat(async (text) => {
   history.push({ role: "user", content: text });
   await addHistory("user", text);
 
-  setTyping(true);
+  let reply;
+
   try {
     const msg = await groqChat(history);
-    const reply = (msg.content ?? "").trim();
+    reply = (msg.content ?? "").trim();
+  } catch (e: any) {
+    addMessage("system", e?.message ?? "error");
+  }
+
+  if (reply === "...") {
+    // ...
+  } else {
+    for (const line of reply.split("\n")) {
+      if (line.trim() === "") {
+        // skip empty lines
+        continue;
+      }
+
+      setTyping(true);
+      await thinkSleep(line);
+      addMessage("them", line);
+    }
+    setTyping(false);
     history.push({ role: "assistant", content: reply });
     await addHistory("assistant", reply);
-    setTyping(false);
-    addMessage("them", reply);
-  } catch (e: any) {
-    setTyping(false);
-    addMessage("system", e?.message ?? "error");
   }
 });
