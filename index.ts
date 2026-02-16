@@ -1,7 +1,5 @@
-import readline from "node:readline";
-import { stdin as input, stdout as output } from "node:process";
-import chalk from "chalk";
 import { addHistory } from "./db";
+import { addMessage, setTyping, startChat } from "./chat";
 
 type Message =
   | {
@@ -33,8 +31,6 @@ if (!GROQ_API_KEY) {
 
 const MODEL = process.env.GROQ_MODEL ?? "llama-3.1-8b-instant";
 const GROQ_URL = "https://api.groq.com/openai/v1/chat/completions";
-const DEBUG = process.env.DEBUG === "1";
-let totalTokens = 0;
 
 // --- Tools ---
 
@@ -74,18 +70,6 @@ async function groqChat(messages: Message[]) {
     body: JSON.stringify(body),
   });
 
-  if (DEBUG) {
-    const last = messages[messages.length - 1];
-    console.error(
-      chalk.gray(
-        `> ${last.role}: ${("content" in last ? last.content : "").slice(
-          0,
-          120
-        )}`
-      )
-    );
-  }
-
   if (!res.ok) {
     const t = await res.text();
     throw new Error(`Groq error ${res.status}: ${t}`);
@@ -95,13 +79,6 @@ async function groqChat(messages: Message[]) {
     choices: GroqChoice[];
     usage?: { total_tokens: number };
   };
-  if (DEBUG) {
-    const reply = json.choices[0]?.message;
-    const txt = reply?.content?.slice(0, 120) ?? "";
-    const tc = reply?.tool_calls?.map((t) => t.function.name).join(", ") ?? "";
-    console.error(chalk.grey(`< ${txt}${tc ? ` [tools: ${tc}]` : ""}`));
-  }
-  totalTokens += json.usage?.total_tokens ?? 0;
   return json.choices[0].message;
 }
 
@@ -113,37 +90,24 @@ const system: Message = {
     "You are a helpful irc assistant. use lowercase. do not use emotion. think deeply. reply with '...' unless directly asked. use yup instead yes",
 };
 
-// --- CLI ---
+// --- Chat UI ---
 
-const rl = readline.createInterface({ input, output, terminal: true });
 const history: Message[] = [system];
 
-function prompt() {
-  rl.question(chalk.green(`[${totalTokens}tok] > `), async (line) => {
-    const q = line.trim();
-    if (!q) return prompt();
-    if (q === "/exit" || q === "/quit") {
-      rl.close();
-      return;
-    }
+startChat(async (text) => {
+  history.push({ role: "user", content: text });
+  await addHistory("user", text);
 
-    history.push({ role: "user", content: q });
-    await addHistory("user", q);
-
-    try {
-      const msg = await groqChat(history);
-      const text = (msg.content ?? "").trim();
-      history.push({ role: "assistant", content: text });
-      await addHistory("assistant", text);
-      console.log(chalk.white(text));
-    } catch (e: any) {
-      console.error(e?.message ?? e);
-    }
-
-    prompt();
-  });
-}
-
-console.log(chalk.cyan(`Groq model: ${MODEL}`));
-console.log(chalk.dim("Type /exit to quit."));
-prompt();
+  setTyping(true);
+  try {
+    const msg = await groqChat(history);
+    const reply = (msg.content ?? "").trim();
+    history.push({ role: "assistant", content: reply });
+    await addHistory("assistant", reply);
+    setTyping(false);
+    addMessage("them", reply);
+  } catch (e: any) {
+    setTyping(false);
+    addMessage("system", e?.message ?? "error");
+  }
+});
