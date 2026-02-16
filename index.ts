@@ -13,6 +13,7 @@
 import readline from "node:readline";
 import { stdin as input, stdout as output } from "node:process";
 import chalk from "chalk";
+import MiniSearch from "minisearch";
 import {
   setMemory,
   getMemory,
@@ -177,6 +178,27 @@ const tools: ToolDef[] = [
   },
 ];
 
+// --- Tool search index (MiniSearch) ---
+
+const toolIndex = new MiniSearch({
+  fields: ["name", "description"],
+  storeFields: ["name"],
+});
+toolIndex.addAll(
+  tools.map((t, i) => ({
+    id: i,
+    name: t.function.name,
+    description: t.function.description ?? "",
+  }))
+);
+
+function findTools(query: string): ToolDef[] {
+  const results = toolIndex.search(query, { fuzzy: 0.2, prefix: true });
+  if (!results.length) return tools; // fallback: all tools
+  const names = new Set(results.map((r: any) => r.name));
+  return tools.filter((t) => names.has(t.function.name));
+}
+
 async function runTool(name: string, args: any): Promise<string> {
   if (name === "get_time") return nowISO();
 
@@ -249,14 +271,16 @@ type GroqChoice = {
   };
 };
 
-async function groqChat(messages: Message[]) {
-  const body = {
+async function groqChat(messages: Message[], opts?: { tools?: ToolDef[] }) {
+  const body: any = {
     model: MODEL,
     messages,
-    tools,
-    tool_choice: "auto",
     temperature: 0,
   };
+  if (opts?.tools?.length) {
+    body.tools = opts.tools;
+    body.tool_choice = "auto";
+  }
 
   const res = await fetch(GROQ_URL, {
     method: "POST",
@@ -304,15 +328,61 @@ async function groqChat(messages: Message[]) {
 const system: Message = {
   role: "system",
   content:
-    "You are a terminal agent. When you can't answer, call tools. Never call tools unless you must.",
+    "You are a helpful terminal agent. Answer the user directly. " +
+    "After every reply, append exactly one line: confidence: N% " +
+    "where N reflects how sure you are WITHOUT needing external data. " +
+    "High (70-100): you can answer from general knowledge alone. " +
+    "Low (0-49): the answer requires real-time info (current time, live data), " +
+    "precise computation, stored memories, or past conversation history you don't have. " +
+    "Be honest — if you're guessing at something a tool could verify, say so.",
 };
 
-async function agentTurn(history: Message[]) {
-  // Allow a few tool-call iterations per user input.
-  for (let i = 0; i < 6; i++) {
-    const msg = await groqChat(history);
+function parseConfidence(text: string): number {
+  const match = text.match(/confidence:\s*(\d+)%/i);
+  return match ? parseInt(match[1], 10) : 100;
+}
 
-    // Tool calling path
+async function agentTurn(history: Message[]) {
+  // Phase 1: No tools — just think and reply with confidence
+  const firstMsg = await groqChat(history);
+  const firstText = (firstMsg.content ?? "").trim();
+  const confidence = parseConfidence(firstText);
+
+  if (DEBUG) {
+    console.error(chalk.yellow(`  confidence: ${confidence}%`));
+  }
+
+  // High confidence? Ship it.
+  if (confidence >= 50) {
+    history.push({ role: "assistant", content: firstText });
+    return firstText;
+  }
+
+  // Phase 2: Low confidence — fuzzy match tools and re-prompt
+  const userMsg = [...history].reverse().find((m) => m.role === "user");
+  const query = userMsg && "content" in userMsg ? userMsg.content : firstText;
+  const matched = findTools(query);
+
+  if (DEBUG) {
+    console.error(
+      chalk.yellow(
+        `  tools matched: ${matched.map((t) => t.function.name).join(", ")}`
+      )
+    );
+  }
+
+  // Push the uncertain response, then nudge with tools
+  history.push({ role: "assistant", content: firstText });
+  history.push({
+    role: "user",
+    content:
+      "You now have tools available. Use them to provide a precise answer.",
+  });
+
+  // Tool loop
+  for (let i = 0; i < 6; i++) {
+    const msg = await groqChat(history, { tools: matched });
+
     if (msg.tool_calls && msg.tool_calls.length) {
       history.push({
         role: "assistant",
@@ -328,7 +398,6 @@ async function agentTurn(history: Message[]) {
       continue;
     }
 
-    // Final assistant response
     const text = (msg.content ?? "").trim();
     history.push({ role: "assistant", content: text });
     return text;
