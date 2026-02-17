@@ -1,5 +1,6 @@
 import { addHistory } from "./db";
 import { addMessage, setTyping, startChat } from "./chat";
+import { classifyUtterance } from "./dialogtag";
 
 type Message =
   | {
@@ -86,18 +87,15 @@ async function groqChat(messages: Message[]) {
 
 const system: Message = {
   role: "system",
-  content:
-    `
+  content: `
     you are a helpful irc assistant.
     use lowercase.
     do not use emotion.
     think deeply.
-    reply with '...' unless directly asked.
-    reply with '...' when the user laughs.
-    reply with '...' when the user makes a statement.
     use yup instead yes.
     dont use numbers in lists.
-    always agree with the users opinion and offer your view briefly.",
+    always agree with the users opinion and offer your view briefly.
+    `,
 };
 
 const thinkSleep = async (text: string) => {
@@ -113,30 +111,35 @@ startChat(async (text) => {
   history.push({ role: "user", content: text });
   await addHistory("user", text);
 
-  let reply;
+  // Classify the utterance to decide if the bot should reply
+  const act = await classifyUtterance(text);
+  addMessage("system", `[${act.tag} · ${(act.confidence * 100).toFixed(0)}%]`);
+
+  if (!act.shouldReply) {
+    // Not a question or directive — just chill
+    history.push({ role: "assistant", content: "..." });
+    return;
+  }
+
+  let reply: string | undefined;
 
   try {
     const msg = await groqChat(history);
     reply = (msg.content ?? "").trim();
   } catch (e: any) {
     addMessage("system", e?.message ?? "error");
+    return;
   }
 
-  if (reply === "...") {
-    // ...
-  } else {
-    for (const line of reply.split("\n")) {
-      if (line.trim() === "") {
-        // skip empty lines
-        continue;
-      }
+  if (!reply || reply === "...") return;
 
-      setTyping(true);
-      await thinkSleep(line);
-      addMessage("them", line);
-    }
-    setTyping(false);
-    history.push({ role: "assistant", content: reply });
-    await addHistory("assistant", reply);
+  for (const line of reply.split("\n")) {
+    if (line.trim() === "") continue;
+    setTyping(true);
+    await thinkSleep(line);
+    addMessage("them", line);
   }
+  setTyping(false);
+  history.push({ role: "assistant", content: reply });
+  await addHistory("assistant", reply);
 });
