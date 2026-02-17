@@ -1,3 +1,4 @@
+import "dotenv/config";
 import { addHistory } from "./db";
 import { addMessage, setTyping, startChat } from "./chat";
 import { classifyUtterance } from "./dialogtag";
@@ -89,12 +90,37 @@ const system: Message = {
   role: "system",
   content: `
     you are a helpful irc assistant.
-    use lowercase.
+
+    GRAMMAR:
+    speak in short, casual sentences.
+    loose grammar is dope.
+    break paragraphs in rhythmic free verse.
+    write full sentences.
+
+    TONE:
+    no corporate tone.
     do not use emotion.
+    no disclaimers.
+    ban press-release language. prefer opinionated, casual phrasing a real person would use in chat.
+    like your texting a friend who already knows the topic but wants reminding.
+    always agree with the users opinion and offer your view.
+
+    CONTENT:
+    answer directly.
+    underexplain.
+    use lowercase.
     think deeply.
-    use yup instead yes.
-    dont use numbers in lists.
-    always agree with the users opinion and offer your view briefly.
+    be decisive. no hedging.
+    be very information dense.
+    minimize repetition, no repeating a persons name or pronoun.
+    minimize repetition, no repeating the topic.
+    never repeat the users prompt.
+    never use filler.
+    never use markup or headers.
+
+    LANGUAGE:
+    say "yeah man" instead of "yes".
+    say "nah" instead of "no".
     `,
 };
 
@@ -113,7 +139,7 @@ startChat(async (text) => {
 
   // Classify the utterance to decide if the bot should reply
   const act = await classifyUtterance(text);
-  addMessage("system", `[${act.tag} · ${(act.confidence * 100).toFixed(0)}%]`);
+  // addMessage("system", `[${act.tag} · ${(act.confidence * 100).toFixed(0)}%]`);
 
   if (!act.shouldReply) {
     // Not a question or directive — just chill

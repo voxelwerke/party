@@ -7,6 +7,7 @@ type Msg = { id: string; sender: Sender; text: string; ts: number };
 const screen = blessed.screen({
   smartCSR: true,
   fullUnicode: true,
+  mouse: false,
   title: "iMessage-ish CLI",
 });
 
@@ -26,12 +27,6 @@ const chatBox = blessed.box({
   width: "100%",
   height: "100%-4",
   tags: true,
-  scrollable: true,
-  alwaysScroll: true,
-  scrollbar: {
-    ch: " ",
-    inverse: true,
-  },
   style: { bg: "black" },
 });
 
@@ -42,7 +37,7 @@ const inputBox = blessed.textbox({
   width: "100%",
   inputOnFocus: true,
   keys: true,
-  mouse: true,
+  mouse: false,
   padding: { left: 1, right: 1 },
   border: { type: "line" },
   style: {
@@ -105,14 +100,14 @@ function bubbleLines(
   sender: Sender,
   text: string,
   ts: number,
-  maxWidth: number
+  maxWidth: number,
 ) {
   const innerPadX = 1;
   const maxInner = clamp(maxWidth - 2 - innerPadX * 2, 10, maxWidth);
   const contentLines = wrapText(text, maxInner);
   const contentWidth = Math.min(
     maxInner,
-    Math.max(1, ...contentLines.map((l) => stripTags(l).length))
+    Math.max(1, ...contentLines.map((l) => stripTags(l).length)),
   );
 
   const w = contentWidth + innerPadX * 2;
@@ -123,15 +118,15 @@ function bubbleLines(
     sender === "me"
       ? "{cyan-fg}"
       : sender === "them"
-      ? "{light-gray-fg}"
-      : "{green-fg}";
+        ? "{light-gray-fg}"
+        : "{green-fg}";
   const styleClose = "{/}";
 
   const middle = contentLines.map((l) => {
     const rawLen = stripTags(l).length;
     const padRight = contentWidth - rawLen;
     return `│${" ".repeat(innerPadX)}${l}${" ".repeat(padRight)}${" ".repeat(
-      innerPadX
+      innerPadX,
     )}│`;
   });
 
@@ -170,7 +165,6 @@ function render() {
   }
 
   chatBox.setContent(out.join("\n"));
-  chatBox.setScrollPerc(100);
   screen.render();
 }
 
