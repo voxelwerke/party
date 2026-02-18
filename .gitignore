@@ -1,3 +1,4 @@
+*.db
 
 .attic
 node_modules

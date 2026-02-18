@@ -2,6 +2,7 @@ import "dotenv/config";
 import { addHistory } from "./db";
 import { addMessage, setTyping, startChat } from "./chat";
 import { classifyUtterance } from "./dialogtag";
+import { getMastodonFeed } from "./skills/get-feed";
 
 type Message =
   | {
@@ -36,7 +37,33 @@ const GROQ_URL = "https://api.groq.com/openai/v1/chat/completions";
 
 // --- Tools ---
 
-const tools: ToolDef[] = [];
+const tools: ToolDef[] = [
+  {
+    type: "function",
+    function: {
+      name: "get_mastodon_feed",
+      description:
+        "Fetch recent posts from a Mastodon user and return a text summary. Handle format: user@instance e.g. TimBL@W3C.social",
+      parameters: {
+        type: "object",
+        properties: {
+          handle: {
+            type: "string",
+            description:
+              "Mastodon handle in user@instance format, e.g. TimBL@W3C.social",
+          },
+        },
+        required: ["handle"],
+      },
+    },
+  },
+];
+
+type ToolHandler = (args: Record<string, string>) => Promise<string>;
+
+const toolHandlers: Record<string, ToolHandler> = {
+  get_mastodon_feed: async (args) => getMastodonFeed(args.handle),
+};
 
 // --- Groq chat call ---
 
@@ -150,7 +177,31 @@ startChat(async (text) => {
   let reply: string | undefined;
 
   try {
-    const msg = await groqChat(history);
+    let msg = await groqChat(history);
+
+    while (msg.tool_calls?.length) {
+      history.push({ role: "assistant", content: msg.content ?? "", tool_calls: msg.tool_calls });
+
+      for (const tc of msg.tool_calls) {
+        const handler = toolHandlers[tc.function.name];
+        let result: string;
+        if (!handler) {
+          result = `unknown tool: ${tc.function.name}`;
+        } else {
+          try {
+            const args = JSON.parse(tc.function.arguments);
+            addMessage("system", `[calling ${tc.function.name}...]`);
+            result = await handler(args);
+          } catch (err: any) {
+            result = `error: ${err?.message ?? err}`;
+          }
+        }
+        history.push({ role: "tool", content: result, tool_call_id: tc.id });
+      }
+
+      msg = await groqChat(history);
+    }
+
     reply = (msg.content ?? "").trim();
   } catch (e: any) {
     addMessage("system", e?.message ?? "error");
